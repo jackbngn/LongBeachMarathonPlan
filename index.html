@@ -172,6 +172,17 @@ body.standalone nav{position:fixed;top:0;left:0;right:0;padding-top:calc(8px + e
 @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:0.3}}
 .strava-tag{display:inline-block;font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:#FC4C02;border:1px solid rgba(252,76,2,0.45);border-radius:3px;padding:0 5px;margin-left:4px;vertical-align:middle}
 
+/* ROUTE MAP */
+.route-toggle{display:inline-flex;align-items:center;gap:3px;background:transparent;border:1px solid var(--border2);color:var(--muted2);font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;padding:1px 6px;border-radius:3px;margin-left:4px;cursor:pointer;vertical-align:middle;transition:all 0.15s}
+.route-toggle:hover{color:#FC4C02;border-color:#FC4C02}
+.route-toggle.open{color:#FC4C02;border-color:rgba(252,76,2,0.45)}
+.route-map-wrap{grid-column:1/-1;margin-top:8px;border-radius:10px;overflow:hidden;border:1px solid var(--border2);height:0;opacity:0;transition:height 0.25s ease,opacity 0.2s ease}
+.route-map-wrap.open{height:190px;opacity:1}
+.route-map{width:100%;height:190px;background:var(--surface3)}
+.route-map .leaflet-control-attribution{background:rgba(13,13,15,0.75)!important;color:var(--muted2)!important;font-size:9px!important}
+.route-map .leaflet-control-attribution a{color:var(--muted)!important}
+.route-map-loading{display:flex;align-items:center;justify-content:center;height:100%;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted2)}
+
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.62);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:1rem}
 .modal-overlay.open{display:flex}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:1.5rem;max-width:440px;width:100%;max-height:90vh;overflow:auto}
@@ -208,6 +219,8 @@ body.standalone nav{position:fixed;top:0;left:0;right:0;padding-top:calc(8px + e
   .drag-hint{display:none}
 }
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body>
 
@@ -351,6 +364,38 @@ function getLog(dk){
 }
 function delLog(dk){
   try{localStorage.removeItem('pfitz_log__'+dk);}catch(e){}
+}
+
+// Route polylines (from Strava) stored per day, separate from the log itself.
+function savRoutes(dk,polylines){
+  try{localStorage.setItem('pfitz_route__'+dk,JSON.stringify(polylines));}catch(e){}
+}
+function getRoutes(dk){
+  try{
+    const raw=localStorage.getItem('pfitz_route__'+dk);
+    return raw?JSON.parse(raw):null;
+  }catch(e){return null;}
+}
+function delRoutes(dk){
+  try{localStorage.removeItem('pfitz_route__'+dk);}catch(e){}
+}
+
+// Decodes Google's polyline encoding (the format Strava returns for routes)
+// into an array of [lat, lng] points.
+function decodePolyline(encoded){
+  let points=[], index=0, lat=0, lng=0;
+  while(index<encoded.length){
+    let b,shift=0,result=0;
+    do{ b=encoded.charCodeAt(index++)-63; result|=(b&0x1f)<<shift; shift+=5; }while(b>=0x20);
+    const dlat=(result&1)?~(result>>1):(result>>1);
+    lat+=dlat;
+    shift=0;result=0;
+    do{ b=encoded.charCodeAt(index++)-63; result|=(b&0x1f)<<shift; shift+=5; }while(b>=0x20);
+    const dlng=(result&1)?~(result>>1):(result>>1);
+    lng+=dlng;
+    points.push([lat/1e5,lng/1e5]);
+  }
+  return points;
 }
 
 const PLAN=[
@@ -582,6 +627,7 @@ function openLogForm(dk){
 function rerenderPreserveOpen(){
   const openWeeks=new Set();
   document.querySelectorAll('.wk-rows.open').forEach(r=>openWeeks.add(r.id));
+  const openMaps=new Set(Object.keys(window._routeMaps||{}));
   render();
   updateProgress();
   buildMiniWeeks();
@@ -592,6 +638,7 @@ function rerenderPreserveOpen(){
     if(rows)rows.classList.add('open');
     if(chev)chev.style.transform='rotate(180deg)';
   });
+  openMaps.forEach(dk=>{ if(document.getElementById('rtbtn_'+dk)) toggleRouteMap(dk); });
 }
 
 // One-tap complete: logs the planned mileage (or 0 for rest days)
@@ -641,6 +688,12 @@ function formatDesc(desc){
 
 // ── RENDER ─────────────────────────────────────────────────────────────────
 function render(){
+  // Tear down any open route maps before wiping #plan, so Leaflet instances
+  // don't leak on DOM nodes that are about to be discarded.
+  if(window._routeMaps){
+    Object.values(window._routeMaps).forEach(m=>{try{m.remove();}catch(e){}});
+  }
+  window._routeMaps={};
   const el=document.getElementById('plan');
   el.innerHTML='';
   PLAN.forEach(wk=>{
@@ -674,9 +727,13 @@ function render(){
       const loggedClass=hasLog?' logged':'';
 
       const stravaTag=(hasLog&&log.source==='strava')?`<span class="strava-tag">Strava</span>`:'';
-      const loggedMiHtml=hasLog?`<div class="dr-mi-logged">${log.mi.toFixed(1)} mi ✓${stravaTag}</div>`:'';
+      const routes=hasLog?getRoutes(dk):null;
+      const hasRoute=routes&&routes.length;
+      const routeBtn=hasRoute?`<button class="route-toggle" id="rtbtn_${dk}" onclick="toggleRouteMap('${dk}')">🗺 map</button>`:'';
+      const loggedMiHtml=hasLog?`<div class="dr-mi-logged">${log.mi.toFixed(1)} mi ✓${stravaTag}${routeBtn}</div>`:'';
       const noteHtml=hasLog&&log.note?`<div class="log-note-display">"${log.note}"</div>`:'';
       const plannedMi=d.mi!=null?`<div class="dr-mi">${d.mi} mi planned</div>`:'';
+      const routeMapHtml=hasRoute?`<div class="route-map-wrap" id="rtwrap_${dk}"><div class="route-map" id="rtmap_${dk}"></div></div>`:'';
 
       let actionsHtml;
       if(hasLog){
@@ -722,6 +779,7 @@ function render(){
             ${plannedMi}
             <div class="dr-actions">${actionsHtml}</div>
           </div>
+          ${routeMapHtml}
         </div>
         ${formHtml}`;
     }).join('');
@@ -952,13 +1010,65 @@ function setModalStatus(msg,kind){
 
 // Match Strava runs to plan days and write them as logged miles.
 // Never overwrites a day the user logged by hand (source !== 'strava').
+// ── ROUTE MAP (Leaflet) ─────────────────────────────────────────────────────
+// Lazily builds a small dark-tiled map the first time a day's "map" toggle is
+// clicked, drawing the day's Strava route(s) as a polyline. Re-toggling just
+// shows/hides it — the Leaflet instance is kept (and torn down on re-render).
+window._routeMaps=window._routeMaps||{};
+
+function toggleRouteMap(dk){
+  const wrap=document.getElementById('rtwrap_'+dk);
+  const btn=document.getElementById('rtbtn_'+dk);
+  if(!wrap)return;
+  const isOpen=wrap.classList.contains('open');
+  if(isOpen){
+    wrap.classList.remove('open');
+    if(btn)btn.classList.remove('open');
+    return;
+  }
+  wrap.classList.add('open');
+  if(btn)btn.classList.add('open');
+
+  if(window._routeMaps[dk]){
+    // already built — just make sure it's sized correctly now that it's visible
+    setTimeout(()=>window._routeMaps[dk].invalidateSize(),260);
+    return;
+  }
+
+  const mapEl=document.getElementById('rtmap_'+dk);
+  if(!mapEl || typeof L==='undefined')return;
+
+  const routes=getRoutes(dk)||[];
+  const lines=routes.map(decodePolyline).filter(pts=>pts.length>1);
+  if(!lines.length){
+    mapEl.innerHTML='<div class="route-map-loading">No route data for this run</div>';
+    return;
+  }
+
+  setTimeout(()=>{
+    const map=L.map(mapEl,{zoomControl:false,attributionControl:true,dragging:true,scrollWheelZoom:false});
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+      attribution:'© OpenStreetMap © CARTO',
+      maxZoom:19
+    }).addTo(map);
+    const allPts=[];
+    lines.forEach(pts=>{
+      L.polyline(pts,{color:'#E87C52',weight:3,opacity:0.9}).addTo(map);
+      allPts.push(...pts);
+    });
+    map.fitBounds(allPts,{padding:[16,16]});
+    window._routeMaps[dk]=map;
+  },260); // wait for the CSS height transition so Leaflet measures the final size
+}
+
 function applyStravaRuns(runs){
   const byKey={};
   runs.forEach(run=>{
     const dk=dayKey(localDayLabel(run.start_date_local));
-    if(!byKey[dk])byKey[dk]={mi:0,names:[]};
+    if(!byKey[dk])byKey[dk]={mi:0,names:[],polylines:[]};
     byKey[dk].mi+=run.distance_mi;
     if(run.name)byKey[dk].names.push(run.name);
+    if(run.polyline)byKey[dk].polylines.push(run.polyline);
   });
   const planKeys=new Set();
   PLAN.forEach(wk=>wk.days.forEach(d=>planKeys.add(dayKey(d.d))));
@@ -970,6 +1080,7 @@ function applyStravaRuns(runs){
     const e=byKey[dk];
     const note=e.names.length>1?(e.names.length+' runs'):(e.names[0]||'');
     savLog(dk,+e.mi.toFixed(1),note,'strava');
+    if(e.polylines.length)savRoutes(dk,e.polylines); else delRoutes(dk);
     matched++;
   });
   return {matched,skipped};
