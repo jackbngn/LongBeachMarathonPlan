@@ -174,11 +174,8 @@ body.standalone nav{position:fixed;top:0;left:0;right:0;padding-top:calc(8px + e
 
 /* ROUTE MAP */
 .route-map-wrap{margin-top:8px;width:100%;border-radius:10px;overflow:hidden;border:1px solid var(--border2)}
-.route-map{width:100%;height:170px;background:var(--surface3)}
-.route-map{width:100%;height:170px;background:var(--surface3)}
+.route-map{width:100%;height:150px;background:var(--surface3)}
 .strava-caption{font-size:12.5px;color:var(--text);opacity:0.85;line-height:1.5;margin-top:3px;font-style:italic}
-.route-map .leaflet-control-attribution{background:rgba(13,13,15,0.75)!important;color:var(--muted2)!important;font-size:9px!important}
-.route-map .leaflet-control-attribution a{color:var(--muted)!important}
 .route-map-loading{display:flex;align-items:center;justify-content:center;height:100%;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted2)}
 
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.62);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:1rem}
@@ -1034,17 +1031,15 @@ function initRouteMapsIn(container){
       mapEl.innerHTML='<div class="route-map-loading">No route data for this run</div>';
       return;
     }
-    const map=L.map(mapEl,{zoomControl:false,attributionControl:true,dragging:true,scrollWheelZoom:false});
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-      attribution:'© OpenStreetMap © CARTO',
-      maxZoom:19
-    }).addTo(map);
+    // No tile layer — just the route itself as a clean line on a plain
+    // background, so nothing to pan/zoom around.
+    const map=L.map(mapEl,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,touchZoom:false,doubleClickZoom:false,boxZoom:false,keyboard:false});
     const allPts=[];
     lines.forEach(pts=>{
-      L.polyline(pts,{color:'#E87C52',weight:3,opacity:0.9}).addTo(map);
+      L.polyline(pts,{color:'#E87C52',weight:3,opacity:0.95,lineJoin:'round',lineCap:'round'}).addTo(map);
       allPts.push(...pts);
     });
-    map.fitBounds(allPts,{padding:[16,16]});
+    map.fitBounds(allPts,{padding:[18,18]});
     window._routeMaps[dk]=map;
   });
 }
