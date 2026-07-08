@@ -118,6 +118,7 @@ body.standalone nav{position:fixed;top:0;left:0;right:0;padding-top:calc(8px + e
 .dr-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 .dr-mi{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted2);white-space:nowrap}
 .dr-mi-logged{font-family:'DM Mono',monospace;font-size:12px;color:var(--green);white-space:nowrap}
+.dr-stats{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted2);white-space:nowrap;margin-top:1px}
 .log-btn{background:transparent;border:1px solid var(--border2);color:var(--muted2);font-family:'DM Mono',monospace;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;transition:all 0.15s;white-space:nowrap}
 .log-btn:hover{border-color:var(--accent);color:var(--accent)}
 .log-btn.has-log{border-color:var(--green);color:var(--green)}
@@ -347,10 +348,11 @@ const _WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const _MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function todayLabel(){const d=new Date();return _WD[d.getDay()]+' '+_MO[d.getMonth()]+' '+d.getDate();}
 const TODAY_KEY=dayKey(todayLabel());
-function savLog(dk,mi,note,source,caption){
+function savLog(dk,mi,note,source,caption,movingTimeS){
   const obj={mi:parseFloat(mi),note:note||''};
   if(source)obj.source=source;
   if(caption)obj.caption=caption;
+  if(movingTimeS)obj.movingTimeS=movingTimeS;
   try{localStorage.setItem('pfitz_log__'+dk,JSON.stringify(obj));}catch(e){}
 }
 function getLog(dk){
@@ -380,6 +382,23 @@ function delRoutes(dk){
 // Escapes arbitrary text (e.g. a Strava caption) before dropping it into HTML.
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// "37:50" under an hour, "1:00:17" once it crosses an hour — matches Strava's own formatting.
+function formatDuration(totalSec){
+  totalSec=Math.round(totalSec);
+  const h=Math.floor(totalSec/3600);
+  const m=Math.floor((totalSec%3600)/60);
+  const s=totalSec%60;
+  if(h>0)return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+// secPerMile -> "9:27 /mi"
+function formatPace(secPerMile){
+  let m=Math.floor(secPerMile/60);
+  let s=Math.round(secPerMile%60);
+  if(s===60){s=0;m+=1;}
+  return `${m}:${String(s).padStart(2,'0')} /mi`;
 }
 
 // Decodes Google's polyline encoding (the format Strava returns for routes)
@@ -733,6 +752,8 @@ function render(){
       const routes=hasLog?getRoutes(dk):null;
       const hasRoute=routes&&routes.length;
       const loggedMiHtml=hasLog?`<div class="dr-mi-logged">${log.mi.toFixed(1)} mi ✓${stravaTag}</div>`:'';
+      const statsHtml=(hasLog&&log.source==='strava'&&log.movingTimeS&&log.mi>0)
+        ?`<div class="dr-stats">${formatPace(log.movingTimeS/log.mi)} · ${formatDuration(log.movingTimeS)}</div>`:'';
       const noteHtml=hasLog&&log.note?`<div class="log-note-display">"${escapeHtml(log.note)}"</div>`:'';
       const captionHtml=(hasLog&&log.source==='strava'&&log.caption)?`<div class="strava-caption">${escapeHtml(log.caption)}</div>`:'';
       const plannedMi=d.mi!=null?`<div class="dr-mi">${d.mi} mi planned</div>`:'';
@@ -781,6 +802,7 @@ function render(){
           </div>
           <div class="dr-right">
             ${loggedMiHtml}
+            ${statsHtml}
             ${plannedMi}
             <div class="dr-actions">${actionsHtml}</div>
           </div>
@@ -1049,11 +1071,12 @@ function applyStravaRuns(runs){
   const byKey={};
   runs.forEach(run=>{
     const dk=dayKey(localDayLabel(run.start_date_local));
-    if(!byKey[dk])byKey[dk]={mi:0,names:[],polylines:[],descriptions:[]};
+    if(!byKey[dk])byKey[dk]={mi:0,names:[],polylines:[],descriptions:[],movingTimeS:0};
     byKey[dk].mi+=run.distance_mi;
     if(run.name)byKey[dk].names.push(run.name);
     if(run.polyline)byKey[dk].polylines.push(run.polyline);
     if(run.description)byKey[dk].descriptions.push(run.description);
+    byKey[dk].movingTimeS+=(run.moving_time_s||0);
   });
   const planKeys=new Set();
   PLAN.forEach(wk=>wk.days.forEach(d=>planKeys.add(dayKey(d.d))));
@@ -1065,7 +1088,7 @@ function applyStravaRuns(runs){
     const e=byKey[dk];
     const note=e.names.length>1?(e.names.length+' runs'):(e.names[0]||'');
     const caption=e.descriptions.length?e.descriptions.join(' · '):'';
-    savLog(dk,+e.mi.toFixed(1),note,'strava',caption);
+    savLog(dk,+e.mi.toFixed(1),note,'strava',caption,e.movingTimeS||undefined);
     if(e.polylines.length)savRoutes(dk,e.polylines); else delRoutes(dk);
     matched++;
   });
