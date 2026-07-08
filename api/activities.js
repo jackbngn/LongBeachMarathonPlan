@@ -66,7 +66,7 @@ export default async function handler(req, res) {
 
     const isRun = (a) =>
       ['Run', 'TrailRun'].includes(a.type) || ['Run', 'TrailRun'].includes(a.sport_type);
-    const runs = activities.filter(isRun).map((a) => ({
+    const runsBase = activities.filter(isRun).map((a) => ({
       id: a.id,
       name: a.name,
       distance_mi: +(a.distance / 1609.344).toFixed(2),
@@ -76,6 +76,26 @@ export default async function handler(req, res) {
       avg_hr: a.average_heartrate || null,
       polyline: (a.map && a.map.summary_polyline) || null,
     }));
+
+    // The activity list endpoint doesn't include the caption/description text
+    // you type on Strava — that only comes from the per-activity detail
+    // endpoint. Fetch it for each run in parallel; failures fall back to null
+    // rather than breaking the whole sync.
+    const fetchDescription = async (id) => {
+      try {
+        const r = await fetch(`https://www.strava.com/api/v3/activities/${id}`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        if (!r.ok) return null;
+        const detail = await r.json();
+        return detail.description || null;
+      } catch (e) {
+        return null;
+      }
+    };
+    const runs = await Promise.all(
+      runsBase.map(async (r) => ({ ...r, description: await fetchDescription(r.id) }))
+    );
 
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({ count: runs.length, runs });
