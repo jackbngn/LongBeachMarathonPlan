@@ -173,12 +173,10 @@ body.standalone nav{position:fixed;top:0;left:0;right:0;padding-top:calc(8px + e
 .strava-tag{display:inline-block;font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:#FC4C02;border:1px solid rgba(252,76,2,0.45);border-radius:3px;padding:0 5px;margin-left:4px;vertical-align:middle}
 
 /* ROUTE MAP */
-.route-toggle{display:inline-flex;align-items:center;gap:3px;background:transparent;border:1px solid var(--border2);color:var(--muted2);font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;padding:1px 6px;border-radius:3px;margin-left:4px;cursor:pointer;vertical-align:middle;transition:all 0.15s}
-.route-toggle:hover{color:#FC4C02;border-color:#FC4C02}
-.route-toggle.open{color:#FC4C02;border-color:rgba(252,76,2,0.45)}
-.route-map-wrap{grid-column:1/-1;margin-top:8px;border-radius:10px;overflow:hidden;border:1px solid var(--border2);height:0;opacity:0;transition:height 0.25s ease,opacity 0.2s ease}
-.route-map-wrap.open{height:190px;opacity:1}
-.route-map{width:100%;height:190px;background:var(--surface3)}
+.route-map-wrap{margin-top:8px;width:100%;border-radius:10px;overflow:hidden;border:1px solid var(--border2)}
+.route-map{width:100%;height:170px;background:var(--surface3)}
+.route-map{width:100%;height:170px;background:var(--surface3)}
+.strava-caption{font-size:12.5px;color:var(--text);opacity:0.85;line-height:1.5;margin-top:3px;font-style:italic}
 .route-map .leaflet-control-attribution{background:rgba(13,13,15,0.75)!important;color:var(--muted2)!important;font-size:9px!important}
 .route-map .leaflet-control-attribution a{color:var(--muted)!important}
 .route-map-loading{display:flex;align-items:center;justify-content:center;height:100%;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted2)}
@@ -351,9 +349,10 @@ const _WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const _MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function todayLabel(){const d=new Date();return _WD[d.getDay()]+' '+_MO[d.getMonth()]+' '+d.getDate();}
 const TODAY_KEY=dayKey(todayLabel());
-function savLog(dk,mi,note,source){
+function savLog(dk,mi,note,source,caption){
   const obj={mi:parseFloat(mi),note:note||''};
   if(source)obj.source=source;
+  if(caption)obj.caption=caption;
   try{localStorage.setItem('pfitz_log__'+dk,JSON.stringify(obj));}catch(e){}
 }
 function getLog(dk){
@@ -378,6 +377,11 @@ function getRoutes(dk){
 }
 function delRoutes(dk){
   try{localStorage.removeItem('pfitz_route__'+dk);}catch(e){}
+}
+
+// Escapes arbitrary text (e.g. a Strava caption) before dropping it into HTML.
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // Decodes Google's polyline encoding (the format Strava returns for routes)
@@ -605,12 +609,14 @@ function filter(t,btn){
 function toggleAll(open){
   document.querySelectorAll('.wk-rows').forEach(r=>r.classList.toggle('open',open));
   document.querySelectorAll('.chevron').forEach(c=>c.style.transform=open?'rotate(180deg)':'');
+  if(open)setTimeout(()=>initRouteMapsIn(document),50);
 }
 function toggle(id){
   const r=document.getElementById('r'+id);
   const c=document.getElementById('c'+id);
   const open=r.classList.toggle('open');
   if(c)c.style.transform=open?'rotate(180deg)':'';
+  if(open)setTimeout(()=>initRouteMapsIn(r),50);
 }
 
 // ── LOG FORM TOGGLE ────────────────────────────────────────────────────────
@@ -627,7 +633,6 @@ function openLogForm(dk){
 function rerenderPreserveOpen(){
   const openWeeks=new Set();
   document.querySelectorAll('.wk-rows.open').forEach(r=>openWeeks.add(r.id));
-  const openMaps=new Set(Object.keys(window._routeMaps||{}));
   render();
   updateProgress();
   buildMiniWeeks();
@@ -637,8 +642,8 @@ function rerenderPreserveOpen(){
     const chev=document.getElementById('c'+wkId);
     if(rows)rows.classList.add('open');
     if(chev)chev.style.transform='rotate(180deg)';
+    if(rows)initRouteMapsIn(rows);
   });
-  openMaps.forEach(dk=>{ if(document.getElementById('rtbtn_'+dk)) toggleRouteMap(dk); });
 }
 
 // One-tap complete: logs the planned mileage (or 0 for rest days)
@@ -729,11 +734,11 @@ function render(){
       const stravaTag=(hasLog&&log.source==='strava')?`<span class="strava-tag">Strava</span>`:'';
       const routes=hasLog?getRoutes(dk):null;
       const hasRoute=routes&&routes.length;
-      const routeBtn=hasRoute?`<button class="route-toggle" id="rtbtn_${dk}" onclick="toggleRouteMap('${dk}')">🗺 map</button>`:'';
-      const loggedMiHtml=hasLog?`<div class="dr-mi-logged">${log.mi.toFixed(1)} mi ✓${stravaTag}${routeBtn}</div>`:'';
-      const noteHtml=hasLog&&log.note?`<div class="log-note-display">"${log.note}"</div>`:'';
+      const loggedMiHtml=hasLog?`<div class="dr-mi-logged">${log.mi.toFixed(1)} mi ✓${stravaTag}</div>`:'';
+      const noteHtml=hasLog&&log.note?`<div class="log-note-display">"${escapeHtml(log.note)}"</div>`:'';
+      const captionHtml=(hasLog&&log.source==='strava'&&log.caption)?`<div class="strava-caption">${escapeHtml(log.caption)}</div>`:'';
       const plannedMi=d.mi!=null?`<div class="dr-mi">${d.mi} mi planned</div>`:'';
-      const routeMapHtml=hasRoute?`<div class="route-map-wrap" id="rtwrap_${dk}"><div class="route-map" id="rtmap_${dk}"></div></div>`:'';
+      const routeMapHtml=hasRoute?`<div class="route-map-wrap"><div class="route-map" id="rtmap_${dk}"></div></div>`:'';
 
       let actionsHtml;
       if(hasLog){
@@ -772,6 +777,8 @@ function render(){
           <div class="dr-main">
             <span class="badge" style="background:${BG[d.t]||BG.rest};color:${TC[d.t]||'var(--rest)'}">${d.label}</span>
             ${noteHtml}
+            ${captionHtml}
+            ${routeMapHtml}
             ${d.desc?`<div class="dr-desc">${formatDesc(d.desc)}</div>`:''}
           </div>
           <div class="dr-right">
@@ -779,7 +786,6 @@ function render(){
             ${plannedMi}
             <div class="dr-actions">${actionsHtml}</div>
           </div>
-          ${routeMapHtml}
         </div>
         ${formHtml}`;
     }).join('');
@@ -1011,41 +1017,23 @@ function setModalStatus(msg,kind){
 // Match Strava runs to plan days and write them as logged miles.
 // Never overwrites a day the user logged by hand (source !== 'strava').
 // ── ROUTE MAP (Leaflet) ─────────────────────────────────────────────────────
-// Lazily builds a small dark-tiled map the first time a day's "map" toggle is
-// clicked, drawing the day's Strava route(s) as a polyline. Re-toggling just
-// shows/hides it — the Leaflet instance is kept (and torn down on re-render).
+// Maps just show automatically wherever route data exists — no toggle. The
+// only wrinkle: a week that's collapsed is display:none, so any map inside it
+// would measure 0×0 and render blank. So init runs whenever a week becomes
+// visible (on open, expand-all, and initial today-focus), not just once.
 window._routeMaps=window._routeMaps||{};
 
-function toggleRouteMap(dk){
-  const wrap=document.getElementById('rtwrap_'+dk);
-  const btn=document.getElementById('rtbtn_'+dk);
-  if(!wrap)return;
-  const isOpen=wrap.classList.contains('open');
-  if(isOpen){
-    wrap.classList.remove('open');
-    if(btn)btn.classList.remove('open');
-    return;
-  }
-  wrap.classList.add('open');
-  if(btn)btn.classList.add('open');
-
-  if(window._routeMaps[dk]){
-    // already built — just make sure it's sized correctly now that it's visible
-    setTimeout(()=>window._routeMaps[dk].invalidateSize(),260);
-    return;
-  }
-
-  const mapEl=document.getElementById('rtmap_'+dk);
-  if(!mapEl || typeof L==='undefined')return;
-
-  const routes=getRoutes(dk)||[];
-  const lines=routes.map(decodePolyline).filter(pts=>pts.length>1);
-  if(!lines.length){
-    mapEl.innerHTML='<div class="route-map-loading">No route data for this run</div>';
-    return;
-  }
-
-  setTimeout(()=>{
+function initRouteMapsIn(container){
+  if(!container || typeof L==='undefined')return;
+  container.querySelectorAll('.route-map').forEach(mapEl=>{
+    const dk=mapEl.id.replace(/^rtmap_/,'');
+    if(window._routeMaps[dk])return; // already built
+    const routes=getRoutes(dk)||[];
+    const lines=routes.map(decodePolyline).filter(pts=>pts.length>1);
+    if(!lines.length){
+      mapEl.innerHTML='<div class="route-map-loading">No route data for this run</div>';
+      return;
+    }
     const map=L.map(mapEl,{zoomControl:false,attributionControl:true,dragging:true,scrollWheelZoom:false});
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
       attribution:'© OpenStreetMap © CARTO',
@@ -1058,17 +1046,18 @@ function toggleRouteMap(dk){
     });
     map.fitBounds(allPts,{padding:[16,16]});
     window._routeMaps[dk]=map;
-  },260); // wait for the CSS height transition so Leaflet measures the final size
+  });
 }
 
 function applyStravaRuns(runs){
   const byKey={};
   runs.forEach(run=>{
     const dk=dayKey(localDayLabel(run.start_date_local));
-    if(!byKey[dk])byKey[dk]={mi:0,names:[],polylines:[]};
+    if(!byKey[dk])byKey[dk]={mi:0,names:[],polylines:[],descriptions:[]};
     byKey[dk].mi+=run.distance_mi;
     if(run.name)byKey[dk].names.push(run.name);
     if(run.polyline)byKey[dk].polylines.push(run.polyline);
+    if(run.description)byKey[dk].descriptions.push(run.description);
   });
   const planKeys=new Set();
   PLAN.forEach(wk=>wk.days.forEach(d=>planKeys.add(dayKey(d.d))));
@@ -1079,7 +1068,8 @@ function applyStravaRuns(runs){
     if(existing && existing.source!=='strava'){skipped++;return;} // manual log — don't touch
     const e=byKey[dk];
     const note=e.names.length>1?(e.names.length+' runs'):(e.names[0]||'');
-    savLog(dk,+e.mi.toFixed(1),note,'strava');
+    const caption=e.descriptions.length?e.descriptions.join(' · '):'';
+    savLog(dk,+e.mi.toFixed(1),note,'strava',caption);
     if(e.polylines.length)savRoutes(dk,e.polylines); else delRoutes(dk);
     matched++;
   });
@@ -1170,6 +1160,7 @@ function goToToday(){
     const wk=el.closest('.wk');
     if(wkRows)wkRows.classList.add('open');
     if(wk){const chev=wk.querySelector('.chevron');if(chev)chev.style.transform='rotate(180deg)';}
+    if(wkRows)initRouteMapsIn(wkRows);
     el.scrollIntoView({behavior:'smooth',block:'center'});
   }else{
     // today isn't in the plan (before it starts or after race day) — open week 1
@@ -1192,6 +1183,7 @@ function goToToday(){
   const wk=el.closest('.wk');
   if(wkRows)wkRows.classList.add('open');
   if(wk){const chev=wk.querySelector('.chevron');if(chev)chev.style.transform='rotate(180deg)';}
+  if(wkRows)initRouteMapsIn(wkRows);
   setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'center'}),250);
 })();
 </script>
