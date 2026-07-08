@@ -1,0 +1,10 @@
+{
+  "name": "pfitz-strava",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Long Beach 2026 marathon tracker with automatic Strava sync",
+  "engines": {
+    "node": ">=18"
+  }
+}
