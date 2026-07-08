@@ -74,6 +74,7 @@ export default async function handler(req, res) {
       start_date_local: a.start_date_local,
       type: a.sport_type || a.type,
       avg_hr: a.average_heartrate || null,
+      polyline: (a.map && a.map.summary_polyline) || null,
     }));
 
     res.setHeader('Cache-Control', 'no-store');
